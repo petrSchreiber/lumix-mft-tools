@@ -1,0 +1,107 @@
+﻿uses "ui", "file", "console", "appconfig"
+
+
+function tbmain()
+
+  Console_SetTitle("Copy from Card")
+
+  string sourceDrive, destinationDir
+  long errorCode = CollectInput(sourceDrive, destinationDir)
+  if errorCode Then
+    return errorCode
+  end if
+  
+  ' Validate source
+  string sourceDir = sourceDrive + "DCIM\"
+  if not DIR_Exists(sourceDir) then
+    ReportError $("No DCIM directory found on {sourceDrive}, application will quit")
+    return 3
+  end if
+    
+  string photoDirs()
+  long found = DIR_ListArray(photoDirs, sourceDir, "*_PANA", %FILE_SUBDIR)
+
+  if found = 0 Then
+    ReportError $("No *_PANA directory found on {sourceDir}, application will quit")
+    return 4
+  end if
+  
+  ' Copy data
+  string fullSourceDir, fullDestDir
+  for d as long = 1 to countof(photoDirs)
+    fullSourceDir = sourceDir + photoDirs(d) + "\"
+    
+    CopyFiles(fullSourceDir, destinationDir, "*.jpg", "jpg\")
+    CopyFiles(fullSourceDir, destinationDir, "*.rw2")
+    CopyFiles(fullSourceDir, destinationDir, "*.mov", "video\")
+    CopyFiles(fullSourceDir, destinationDir, "*.mp4", "video\")
+    
+  next
+  
+  PrintL
+  printl "DONE" in 10
+  WaitKey
+
+end function
+
+function ReportError(message as string)
+  msgbox %HWND_DESKTOP, message, %MB_ICONASTERISK, "Problem found"
+end function
+
+function CollectInput(byref sourceDrive as string, byref destinationDir as string)
+  Dim config As new cAppConfig(APP_SourcePath + APP_ScriptName + ".cfg")
+  
+  sourceDrive = config.GetKey("SourceDrive")
+  
+  sourceDrive = Dialog_BrowseForFolder(%HWND_DESKTOP, "Choose SOURCE DRIVE with card", sourceDrive, false)
+  if LEN(sourceDrive) = 0 then
+    return 1
+  else
+    sourceDrive = left$(sourceDrive, 3)
+    config.SetKey("SourceDrive", sourceDrive)
+    config.Save()
+  end if
+  
+  destinationDir = config.GetKey("DestinationDir")
+  destinationDir = Dialog_BrowseForFolder(%HWND_DESKTOP, "Choose base DESTINATION DIRECTORY", destinationDir, false)
+  if LEN(destinationDir) = 0 then
+    return 2
+  else
+    destinationDir = rtrim$(destinationDir, "\")
+    config.SetKey("DestinationDir", destinationDir)
+    config.Save()
+  end if
+
+end function
+
+function CopyFiles(fullSourceDir as string, fullDestinationDirBase as string, extension as string, optional destinationDirSuffix as string)
+
+    string files()
+    long found = DIR_ListArray(files, fullSourceDir, extension, %FILE_NORMAL)
+    string sTimeStamp, sYear, sMonth, sDay
+    string fullDestDir
+
+    for f as long = 1 to found
+      sTimeStamp = FILE_GetDate(fullSourceDir+files(f), %Date_TIME_FILE_CREATION)
+      
+      sYear = parse$(sTimeStamp, "-", 3)
+      sMonth = parse$(sTimeStamp, "-", 1)
+      sDay = parse$(sTimeStamp, "-", 2)
+      
+      fullDestDir = $("{fullDestinationDirBase}\{sYear}\{sMonth}\{sDay}\{destinationDirSuffix}")
+      
+      if not DIR_Exists(fullDestDir) then
+        DIR_MakeAll(fullDestDir)
+      end if
+      
+      print fullDestDir+files(f)
+      if not FILE_Exists(fullDestDir+files(f)) then
+        file_copy(fullSourceDir+files(f), fullDestDir+files(f))
+        printl " OK" in 10
+      else  
+        printl " ALREADY COPIED" in 14
+      end if
+      
+    next
+
+end function

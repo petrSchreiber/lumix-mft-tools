@@ -1,0 +1,430 @@
+﻿uses "ui", "file", "AppConfig", "console", "TBGL", "ini"
+
+$APP_TITLE = "Rapid Raw Rate - TBGL"
+$CACHE_DIR = ".rapidRawRate/"
+
+%sScene = 1
+%eCamera = 1
+  
+type tPhotoDescriptor
+  rawFile as asciiz * 255
+  jpgFile as asciiz * 255
+  entity   as long
+  
+  configFile  as asciiz * 255
+  
+  orientation as long ' 1 = landscape, 8 = 90 L, 3 = 180, 6 = 90
+  interest    as long ' 0 = best, 1 = to decide, 2 = rejected
+  highlight   as long
+  crop        as long ' 0 = 4/3, 1 = 3/2, 2 = 16/9, 3 = 1/1
+  
+  function Save()
+    me.configFile = me.jpgFile + ".ini"
+    INI_SetKey(me.configFile, "Attribute", "orientation", me.orientation)
+    INI_SetKey(me.configFile, "Attribute", "interest", me.interest)
+    INI_SetKey(me.configFile, "Attribute", "crop", me.crop)
+  end function
+  
+  function Load()
+    me.configFile  = me.jpgFile + ".ini"
+    me.orientation = INI_getKey(me.configFile, "Attribute", "orientation", "0")
+    
+    if me.orientation = 0 then
+      
+      string buffer = file_load(me.rawFile)
+      
+      dim exifOrientation as byte at strptr(buffer) + &h1236
+      me.orientation = exifOrientation
+    end If
+    
+    me.interest    = INI_getKey(me.configFile, "Attribute", "interest", 1)
+    me.crop        = INI_getKey(me.configFile, "Attribute", "crop", 0)
+  end function
+  
+end type
+
+type tPhotoEntity
+  textureSlot as Long
+  pDescriptor as tPhotoDescriptor ptr
+end type
+
+function tbMain()
+  
+  $CONFIG = APP_SourcePath + APP_ScriptName + ".cfg"
+  Dim config As new cAppConfig($CONFIG)
+
+  string sourceDir = config.GetKey("SourceDir")
+  
+  sourceDir = Dialog_BrowseForFolder(%HWND_DESKTOP, "Choose SOURCE DIRECTORY", sourceDir, false)
+  if LEN(sourceDir) = 0 then
+    return 1
+  else
+    sourceDir = rtrim$(sourceDir, "\")
+    config.SetKey("SourceDir", sourceDir)
+    config.Save()
+  end if
+  
+  string allDirs()
+  string parentDir
+  
+  parentDir = sourceDir
+  parentDir = left$(sourceDir, instr(-1, sourceDir, "\")-1)
+  
+  DIR_ListArray(allDirs, parentDir, "*", %FILE_SUBDIR | %FILE_ADDPATH)
+  long currentDir = array scan allDirs(), =sourceDir
+  
+  dword dWidth, dHeight
+  desktop get size to dWidth, dHeight
+
+  DWORD hWnd = tbgl_createWindowEx($APP_TITLE, dWidth, dHeight, 32, %TBGL_WS_FULLSCREEN)
+  tbgl_showWindow
+   
+
+  DIM hFont AS DWORD = TBGL_FontHandle("Courier New", 32) 
+  TBGL_BuildFont( hFont ) 
+
+  dim photoDescriptor() as tPhotoDescriptor
+  long photoCount = PrepareDirectoryForRender(hWnd, sourceDir, photoDescriptor)
+  
+  long i
+  Long curFile = 1
+  single x,y,z
+  double frameRate
+  
+  while tbgl_isWindow(hWnd)
+    
+    frameRate = tbgl_getFrameRate
+    if frameRate < 50 then frameRate = 50
+    
+    if photoCount then
+      tbgl_renderMatrix3D
+      tbgl_clearFrame
+        tbgl_camera 0, 0, 2,
+                    0, 0, 0
+                   
+        tbgl_sceneRender(%sScene)
+        
+        tbgl_entitygetpos(%sScene, %eCamera, x, y, z)
+        
+        if abs(x - PhotoIndex_ToCameraPos(curFile)) > 0.001 then
+          tbgl_entitypush(%sScene, %eCamera, 8*(x - PhotoIndex_ToCameraPos(curFile))/frameRate, 0, 0)
+        end if
+      
+      tbgl_drawFrame
+    else
+      tbgl_renderMatrix2D
+      tbgl_clearFrame
+        
+        tbgl_printFont2D "No image...", dWidth/2, dHeight/2, %TBGL_ALIGN_NONE, %TBGL_ALIGN_CENTER_CENTER 
+        
+      tbgl_drawFrame
+
+    end if
+    
+    if tbgl_getWindowKeyOnce(hWnd, %VK_A) then
+        if tbgl_getWindowKeystate(hWnd, %VK_SHIFT) then
+          do
+            curFile = CYCLE_Prev(curFile, 1, countof(photoDescriptor), 1)
+          loop until photoDescriptor(curFile).interest = 0
+        else
+          curFile = CYCLE_Prev(curFile, 1, countof(photoDescriptor), 1)
+        end if
+        
+        PrepareRawForRender(hWnd, photoDescriptor, curFile)
+
+    elseif tbgl_getWindowKeyOnce(hWnd, %VK_D) then
+        if tbgl_getWindowKeystate(hWnd, %VK_SHIFT) then
+          do
+            curFile = CYCLE_Next(curFile, 1, countof(photoDescriptor), 1)
+          loop until photoDescriptor(curFile).interest = 0
+        else
+          curFile = CYCLE_Next(curFile, 1, countof(photoDescriptor), 1)
+        end if
+        
+        PrepareRawForRender(hWnd, photoDescriptor, curFile)
+    
+    elseif tbgl_getWindowKeyOnce(hWnd, %VK_W) then
+      currentDir = cycle_prev(currentDir, 1, countof(allDirs), 1)
+      photoCount =PrepareDirectoryForRender(hWnd, allDirs(currentDir), photoDescriptor)
+      curFile = 1
+    elseif tbgl_getWindowKeyOnce(hWnd, %VK_S) then
+      currentDir = cycle_next(currentDir, 1, countof(allDirs), 1)
+      photoCount =PrepareDirectoryForRender(hWnd, allDirs(currentDir), photoDescriptor)
+      curFile = 1
+    elseif tbgl_getWindowKeyOnce(hWnd, %VK_F) then
+      for i = 1 to countof(photoDescriptor)
+        PrepareRawForRender(hWnd, photoDescriptor, i)
+        tbgl_renderMatrix2D(0,0,1,1)
+        tbgl_clearFrame
+          tbgl_rect(0, 0, i/countof(photoDescriptor), 0.01)
+        tbgl_drawFrame
+        tbgl_renderMatrix3D
+      next
+    elseif tbgl_getWindowKeyOnce(hWnd, %VK_L) then
+        photoDescriptor(curFile).orientation = 1
+        photoDescriptor(curFile).Save()
+        
+    elseif tbgl_getWindowKeyOnce(hWnd, %VK_P) then
+        photoDescriptor(curFile).orientation = 8
+        photoDescriptor(curFile).Save()
+        
+    elseif tbgl_getWindowKeyOnce(hWnd, %VK_C) then
+        photoDescriptor(curFile).crop = CYCLE_Next(photoDescriptor(curFile).crop, 0, 3, 1)
+        photoDescriptor(curFile).Save()
+        
+    elseif tbgl_getWindowKeyOnce(hWnd, %VK_NUMPAD1) then
+        photoDescriptor(curFile).interest = 0
+        photoDescriptor(curFile).Save()
+        
+    elseif tbgl_getWindowKeyOnce(hWnd, %VK_NUMPAD2) then
+        photoDescriptor(curFile).interest = 1
+        photoDescriptor(curFile).Save()
+        
+    elseif tbgl_getWindowKeyOnce(hWnd, %VK_NUMPAD3) then
+        photoDescriptor(curFile).interest = 2
+        photoDescriptor(curFile).Save()
+        
+    elseif tbgl_getWindowKeyOnce(hWnd, %VK_ESCAPE) then
+        exit while
+    end if
+    
+    if tbgl_getWindowKeyState(hWnd, %VK_SPACE) then
+        photoDescriptor(curFile).highlight = 1
+        tbgl_entitygetpos(%sScene, %eCamera, x, y, z)
+        if photoDescriptor(curFile).interest > 0 and z > 1.4 then
+          tbgl_entitypush(%sScene, %eCamera, 0, 0, 20/frameRate)
+          
+          
+          tbgl_entitygetpos(%sScene, %eCamera, x, y, z)
+          if z < 1.4 Then
+            tbgl_entitysetpos(%sScene, %eCamera, x, y, 1.4)
+          end if
+        end if
+
+        if photoDescriptor(curFile).interest = 0 and z > 3.08 then
+          tbgl_entitypush(%sScene, %eCamera, 0, 0, 10/frameRate)
+
+          tbgl_entitygetpos(%sScene, %eCamera, x, y, z)
+          if z < 3.08 Then
+            tbgl_entitysetpos(%sScene, %eCamera, x, y, 3.08)
+          end if
+          
+        end if
+        
+    else
+        photoDescriptor(curFile).highlight = 0
+        tbgl_entitygetpos(%sScene, %eCamera, x, y, z)
+        if z < 5 then
+          tbgl_entitypush(%sScene, %eCamera, 0, 0, -10/frameRate)
+        end if
+    end if
+    
+  Wend
+  
+  tbgl_destroyWindow
+end function
+
+function PrepareDirectoryForRender(hWnd as dword, sourceDir as string, photoDescriptor() as tPhotoDescriptor) as long
+  
+  tbgl_sceneCreate(%sScene)
+
+  string raw() 
+  long photoCount = DIR_ListArray(raw, sourceDir, "*.rw2", %FILE_NORMAL)
+  
+  if photoCount = 0 then
+    return 0
+  end if
+
+  long i
+  redim photoDescriptor(countof(raw)) 
+  for i = 1 to countof(photoDescriptor)
+    photoDescriptor(i).rawFile = sourceDir + "\" + raw(i)
+    photoDescriptor(i).entity = 0
+  next
+  
+  
+  tbgl_entityCreateCamera(%sScene, %eCamera, 0)
+    tbgl_entitysetpos(%sScene, %eCamera, 0, 0, 5)
+    tbgl_entitysettargetpos(%sScene, %eCamera, 0, 0, 0)
+  
+  PrepareRawForRender(hWnd, photoDescriptor, 1)
+  if countof(photoDescriptor) > 1 then PrepareRawForRender(hWnd, photoDescriptor, 2)
+  if countof(photoDescriptor) > 2 then PrepareRawForRender(hWnd, photoDescriptor, 3)
+  
+  return photoCount
+end function
+
+function PhotoIndex_ToCameraPos(photoIndex as long) as single
+  return photoIndex * 4
+end function
+
+function PrepareRawForRender(hWnd as dword, photoDescriptor() as tPhotoDescriptor, photoIndex as long)
+  if photoIndex < 1 then photoIndex = countof(photoDescriptor) - photoIndex
+  if outside(photoIndex, 1, countof(photoDescriptor)) then exit function
+  if photoDescriptor(photoIndex).entity > 0 then exit function
+  
+  photoDescriptor(photoIndex).jpgFile = Raw_ToJpg(photoDescriptor(photoIndex).rawFile)
+  photoDescriptor(photoIndex).entity = Texture_CreateFromImage(hWnd, photoDescriptor, photoIndex)
+end function
+
+function Raw_ToJpg(rawFileName as string) as string
+  
+  string jpgFile = FILE_PathSplit(rawFileName, %PATH_ROOTPATH) + $CACHE_DIR + FILE_PathSplit(rawFileName, %PATH_FILE) + ".jpg"
+  if not DIR_Exists(FILE_PathSplit(rawFileName, %PATH_ROOTPATH) + $CACHE_DIR) then
+    DIR_MakeAll(FILE_PathSplit(rawFileName, %PATH_ROOTPATH) + $CACHE_DIR)
+  end if
+
+  if FILE_Exists(jpgFile) Then
+    return jpgFile
+  end if
+  
+  string beginJPG = chr$(&hFF, &hD8)
+  string endJPG   = chr$(&hFF, &hD9)
+
+  string buffer = File_load(rawFileName)
+
+  long posBegin = instr(buffer, beginJpg)
+  long posEnd
+
+  posEnd = posBegin+1
+  posEnd = instr(posBegin+2, buffer, endJpg) ' Start behind the header
+  
+  while posEnd < 200000
+    posEnd = instr(posEnd+2, buffer, endJpg)   ' The first occurence is not the one we need
+  wend  
+  posEnd+=1                                  ' We will need it till the end
+
+  string jpgContent = mid$(buffer, posBegin, posEnd-posBegin+1)
+
+  
+  file_save(jpgFile, jpgContent)
+  printl "CREATED" + jpgFile in 10
+  
+  function = jpgFile
+
+end function
+
+function Render_Photo()
+  DIM element AS TBGL_tEntityIdentifier AT TBGL_CallingEntity
+  dim photoEntity as tPhotoEntity at TBGL_EntityGetUserDataPointer(element.scene, element.entity)
+  dim photoDescriptor as tPhotoDescriptor at photoEntity.pDescriptor
+
+  if photoDescriptor.interest = 0 then
+    tbgl_scale 1.4
+  end if
+
+  tbgl_pushState %TBGL_TEXTURING
+  tbgl_pushTexture photoEntity.textureSlot
+  if photoDescriptor.interest < 2 or photoDescriptor.highlight = 1 then
+    tbgl_pushColor 255, 255, 255
+  else
+    tbgl_pushColor 255, 0, 0
+  end if
+  
+  tbgl_rotate Switch(photoDescriptor.orientation = 1, 0,
+                     photoDescriptor.orientation = 3, 180,
+                     photoDescriptor.orientation = 6, 270,
+                     photoDescriptor.orientation = 8, 90)
+
+  single uMin, uMax, vMin, vMax
+  single ratioX, ratioY
+  select case photoDescriptor.crop
+    case 0
+      ratioX = 4
+      ratioY = 3
+
+      uMin = 0
+      uMax = 1
+      vMin = 0
+      vMax = 1
+      
+    case 1
+      ratioX = 3
+      ratioY = 2
+
+      uMin = 0
+      uMax = 1
+      vMin = (1-((4/3) / (ratioX/ratioY)))/2
+      vMax = 1-(1-((4/3) / (ratioX/ratioY)))/2
+    
+    case 2
+      ratioX = 16
+      ratioY = 9
+
+      uMin = 0
+      uMax = 1
+      vMin = (1-((4/3) / (ratioX/ratioY)))/2
+      vMax = 1-(1-((4/3) / (ratioX/ratioY)))/2
+    
+    case 3
+      ratioX = 1
+      ratioY = 1
+      
+      uMin = (1-3/4)/2
+      uMax = 1-(1-3/4)/2
+      vMin = 0
+      vMax = 1
+    
+  end select
+
+  tbgl_scale 1.3
+  tbgl_beginPoly %GL_QUADS
+    tbgl_texCoord2D uMin, vMax : tbgl_vertex -1, -ratioY/ratioX
+    tbgl_texCoord2D uMin, vMin : tbgl_vertex -1,  ratioY/ratioX
+    tbgl_texCoord2D uMax, vMin : tbgl_vertex  1,  ratioY/ratioX
+    tbgl_texCoord2D uMax, vMax : tbgl_vertex  1, -ratioY/ratioX
+  tbgl_endPoly
+      
+  
+  tbgl_popColor
+
+  tbgl_popTexture
+  tbgl_popState
+
+
+  if photoDescriptor.interest = 0 Then
+    tbgl_beginPoly %GL_QUADS
+      tbgl_vertex -1-0.05, -ratioY/ratioX-0.05
+      tbgl_vertex -1-0.05,  ratioY/ratioX+0.05
+      tbgl_vertex  1+0.05,  ratioY/ratioX+0.05
+      tbgl_vertex  1+0.05, -ratioY/ratioX-0.05
+    tbgl_endPoly
+  end if
+
+end function
+
+function Texture_CreateFromImage(tbglWindow as dword, photoDescriptor() as tPhotoDescriptor, slot as long) as long
+
+    string imageFile = photoDescriptor(slot).jpgFile
+    photoDescriptor(slot).Load()
+    
+    dword hOriginal, hSmall
+    dword w,h
+                    
+    tbgl_getWindowClient(tbglWindow, w, h)
+    
+    hOriginal = Canvas_BitmapLoad(imageFile, h*4/3, h, 1)
+    Canvas_Attach(hOriginal, 0)
+    
+    long imageW, imageH
+    string buffer = Canvas_BitmapGet(imageW, imageH)
+    Canvas_attach hOriginal, 0                       'Select the main image
+    Canvas_bitmapend                                 'Deallocate memory
+    Canvas_detach
+    
+    printl len(buffer), imageW, imageH
+    
+    tbgl_makeTexture buffer, %TBGL_DATA_BGRA, imageW, imageH, slot, %TBGL_TEX_LINEAR
+    
+    dim pe as tPhotoEntity
+    pe.textureSlot = slot
+    pe.pDescriptor = varptr(photoDescriptor(slot))
+    
+    long e = tbgl_entityGetFreeID(%sScene)
+    tbgl_entityCreateFuncSlot(%sScene, e, 0, "Render_Photo")
+      tbgl_entitySetUserData(%sScene, e, pe)
+      tbgl_entitysetpos(%sScene, e, PhotoIndex_ToCameraPos(slot), 0, 0)
+      
+    return e
+
+end function
