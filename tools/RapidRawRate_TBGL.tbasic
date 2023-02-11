@@ -9,7 +9,6 @@ $CACHE_DIR = ".rapidRawRate/"
 type tPhotoDescriptor
   rawFile as asciiz * 255
   jpgFile as asciiz * 255
-  entity   as long
   
   configFile  as asciiz * 255
   
@@ -17,6 +16,9 @@ type tPhotoDescriptor
   interest    as long ' 0 = best, 1 = to decide, 2 = rejected
   highlight   as long
   crop        as long ' 0 = 4/3, 1 = 3/2, 2 = 16/9, 3 = 1/1
+
+  entity      as long
+  textureSlot as long
   
   function Save()
     me.configFile = me.jpgFile + ".ini"
@@ -44,7 +46,6 @@ type tPhotoDescriptor
 end type
 
 type tPhotoEntity
-  textureSlot as Long
   pDescriptor as tPhotoDescriptor ptr
 end type
 
@@ -86,7 +87,8 @@ function tbMain()
   dim photoDescriptor() as tPhotoDescriptor
   long photoCount = PrepareDirectoryForRender(hWnd, sourceDir, photoDescriptor)
   
-  long i
+  string exportDir
+  long i, j
   Long curFile = 1
   single x,y,z
   double frameRate
@@ -154,11 +156,22 @@ function tbMain()
     elseif tbgl_getWindowKeyOnce(hWnd, %VK_F) then
       for i = 1 to countof(photoDescriptor)
         PrepareRawForRender(hWnd, photoDescriptor, i)
-        tbgl_renderMatrix2D(0,0,1,1)
-        tbgl_clearFrame
-          tbgl_rect(0, 0, i/countof(photoDescriptor), 0.01)
-        tbgl_drawFrame
-        tbgl_renderMatrix3D
+        
+          tbgl_clearFrame
+            
+            for j = 1 to i
+          
+                tbgl_pushMatrix
+                  tbgl_translate -2.7+j/countof(photoDescriptor)*5.4, -1.7+j/countof(photoDescriptor)*3.4, -5+j*0.001
+                  tbgl_rotate sin(j)*25
+                  tbgl_scale 0.2
+                
+                  Draw_Photo(photoDescriptor(j))
+                tbgl_popMatrix
+          
+            next
+            
+          tbgl_drawFrame
       next
     elseif tbgl_getWindowKeyOnce(hWnd, %VK_L) then
         photoDescriptor(curFile).orientation = 1
@@ -183,6 +196,40 @@ function tbMain()
     elseif tbgl_getWindowKeyOnce(hWnd, %VK_NUMPAD3) then
         photoDescriptor(curFile).interest = 2
         photoDescriptor(curFile).Save()
+
+    elseif tbgl_getWindowKeyOnce(hWnd, %VK_X) then
+        exportDir = allDirs(currentDir) + "\EXPORT"
+        if not DIR_Exists(exportDir) then
+          DIR_Make(exportDir)
+        end if
+
+        for i = 1 to countof(photoDescriptor)
+          
+          if photoDescriptor(i).interest = 0 then
+            file_copy(photoDescriptor(i).rawFile, exportDir + "\" + FILE_PathSplit(photoDescriptor(i).rawFile, %PATH_FILEEXT))
+            printl exportDir + "\" + FILE_PathSplit(photoDescriptor(i).rawFile, %PATH_FILEEXT)
+
+          tbgl_clearFrame
+            
+            for j = 1 to i
+              if photoDescriptor(j).interest = 0 then
+                tbgl_pushMatrix
+                  tbgl_translate sin(j), cos(j), -5+j/countof(photoDescriptor)
+                  tbgl_rotate sin(j)*25
+                  tbgl_scale 0.2
+                
+                  Draw_Photo(photoDescriptor(j))
+                tbgl_popMatrix
+              end if
+            next
+            
+          tbgl_drawFrame
+
+          end if
+          
+          
+          
+        next
         
     elseif tbgl_getWindowKeyOnce(hWnd, %VK_ESCAPE) then
         exit while
@@ -212,10 +259,12 @@ function tbMain()
         end if
         
     else
-        photoDescriptor(curFile).highlight = 0
-        tbgl_entitygetpos(%sScene, %eCamera, x, y, z)
-        if z < 5 then
-          tbgl_entitypush(%sScene, %eCamera, 0, 0, -10/frameRate)
+        if photoCount then
+          photoDescriptor(curFile).highlight = 0
+          tbgl_entitygetpos(%sScene, %eCamera, x, y, z)
+          if z < 5 then
+            tbgl_entitypush(%sScene, %eCamera, 0, 0, -10/frameRate)
+          end if
         end if
     end if
     
@@ -304,92 +353,99 @@ function Raw_ToJpg(rawFileName as string) as string
 
 end function
 
+function Draw_Photo(photoDescriptor as tPhotoDescriptor)
+  tbgl_PushMatrix
+    if photoDescriptor.interest = 0 then
+      tbgl_scale 1.4
+    end if
+
+    tbgl_pushState %TBGL_TEXTURING
+    tbgl_pushTexture photoDescriptor.textureSlot
+    if photoDescriptor.interest < 2 or photoDescriptor.highlight = 1 then
+      tbgl_pushColor 255, 255, 255
+    else
+      tbgl_pushColor 255, 0, 0
+    end if
+    
+    tbgl_rotate Switch(photoDescriptor.orientation = 1, 0,
+                       photoDescriptor.orientation = 3, 180,
+                       photoDescriptor.orientation = 6, 270,
+                       photoDescriptor.orientation = 8, 90)
+
+    single uMin, uMax, vMin, vMax
+    single ratioX, ratioY
+    select case photoDescriptor.crop
+      case 0
+        ratioX = 4
+        ratioY = 3
+
+        uMin = 0
+        uMax = 1
+        vMin = 0
+        vMax = 1
+        
+      case 1
+        ratioX = 3
+        ratioY = 2
+
+        uMin = 0
+        uMax = 1
+        vMin = (1-((4/3) / (ratioX/ratioY)))/2
+        vMax = 1-(1-((4/3) / (ratioX/ratioY)))/2
+      
+      case 2
+        ratioX = 16
+        ratioY = 9
+
+        uMin = 0
+        uMax = 1
+        vMin = (1-((4/3) / (ratioX/ratioY)))/2
+        vMax = 1-(1-((4/3) / (ratioX/ratioY)))/2
+      
+      case 3
+        ratioX = 1
+        ratioY = 1
+        
+        uMin = (1-3/4)/2
+        uMax = 1-(1-3/4)/2
+        vMin = 0
+        vMax = 1
+      
+    end select
+
+    tbgl_scale 1.3
+    tbgl_beginPoly %GL_QUADS
+      tbgl_texCoord2D uMin, vMax : tbgl_vertex -1, -ratioY/ratioX
+      tbgl_texCoord2D uMin, vMin : tbgl_vertex -1,  ratioY/ratioX
+      tbgl_texCoord2D uMax, vMin : tbgl_vertex  1,  ratioY/ratioX
+      tbgl_texCoord2D uMax, vMax : tbgl_vertex  1, -ratioY/ratioX
+    tbgl_endPoly
+        
+    
+    tbgl_popColor
+
+    tbgl_popTexture
+    tbgl_popState
+
+
+    if photoDescriptor.interest = 0 Then
+      tbgl_beginPoly %GL_QUADS
+        tbgl_vertex -1-0.05, -ratioY/ratioX-0.05
+        tbgl_vertex -1-0.05,  ratioY/ratioX+0.05
+        tbgl_vertex  1+0.05,  ratioY/ratioX+0.05
+        tbgl_vertex  1+0.05, -ratioY/ratioX-0.05
+      tbgl_endPoly
+    end if
+    
+  tbgl_PopMatrix
+end function
+
 function Render_Photo()
   DIM element AS TBGL_tEntityIdentifier AT TBGL_CallingEntity
   dim photoEntity as tPhotoEntity at TBGL_EntityGetUserDataPointer(element.scene, element.entity)
   dim photoDescriptor as tPhotoDescriptor at photoEntity.pDescriptor
 
-  if photoDescriptor.interest = 0 then
-    tbgl_scale 1.4
-  end if
-
-  tbgl_pushState %TBGL_TEXTURING
-  tbgl_pushTexture photoEntity.textureSlot
-  if photoDescriptor.interest < 2 or photoDescriptor.highlight = 1 then
-    tbgl_pushColor 255, 255, 255
-  else
-    tbgl_pushColor 255, 0, 0
-  end if
-  
-  tbgl_rotate Switch(photoDescriptor.orientation = 1, 0,
-                     photoDescriptor.orientation = 3, 180,
-                     photoDescriptor.orientation = 6, 270,
-                     photoDescriptor.orientation = 8, 90)
-
-  single uMin, uMax, vMin, vMax
-  single ratioX, ratioY
-  select case photoDescriptor.crop
-    case 0
-      ratioX = 4
-      ratioY = 3
-
-      uMin = 0
-      uMax = 1
-      vMin = 0
-      vMax = 1
-      
-    case 1
-      ratioX = 3
-      ratioY = 2
-
-      uMin = 0
-      uMax = 1
-      vMin = (1-((4/3) / (ratioX/ratioY)))/2
-      vMax = 1-(1-((4/3) / (ratioX/ratioY)))/2
-    
-    case 2
-      ratioX = 16
-      ratioY = 9
-
-      uMin = 0
-      uMax = 1
-      vMin = (1-((4/3) / (ratioX/ratioY)))/2
-      vMax = 1-(1-((4/3) / (ratioX/ratioY)))/2
-    
-    case 3
-      ratioX = 1
-      ratioY = 1
-      
-      uMin = (1-3/4)/2
-      uMax = 1-(1-3/4)/2
-      vMin = 0
-      vMax = 1
-    
-  end select
-
-  tbgl_scale 1.3
-  tbgl_beginPoly %GL_QUADS
-    tbgl_texCoord2D uMin, vMax : tbgl_vertex -1, -ratioY/ratioX
-    tbgl_texCoord2D uMin, vMin : tbgl_vertex -1,  ratioY/ratioX
-    tbgl_texCoord2D uMax, vMin : tbgl_vertex  1,  ratioY/ratioX
-    tbgl_texCoord2D uMax, vMax : tbgl_vertex  1, -ratioY/ratioX
-  tbgl_endPoly
-      
-  
-  tbgl_popColor
-
-  tbgl_popTexture
-  tbgl_popState
-
-
-  if photoDescriptor.interest = 0 Then
-    tbgl_beginPoly %GL_QUADS
-      tbgl_vertex -1-0.05, -ratioY/ratioX-0.05
-      tbgl_vertex -1-0.05,  ratioY/ratioX+0.05
-      tbgl_vertex  1+0.05,  ratioY/ratioX+0.05
-      tbgl_vertex  1+0.05, -ratioY/ratioX-0.05
-    tbgl_endPoly
-  end if
+  Draw_Photo(photoDescriptor)
 
 end function
 
@@ -397,6 +453,7 @@ function Texture_CreateFromImage(tbglWindow as dword, photoDescriptor() as tPhot
 
     string imageFile = photoDescriptor(slot).jpgFile
     photoDescriptor(slot).Load()
+    photoDescriptor(slot).textureSlot = slot
     
     dword hOriginal, hSmall
     dword w,h
@@ -417,7 +474,7 @@ function Texture_CreateFromImage(tbglWindow as dword, photoDescriptor() as tPhot
     tbgl_makeTexture buffer, %TBGL_DATA_BGRA, imageW, imageH, slot, %TBGL_TEX_LINEAR
     
     dim pe as tPhotoEntity
-    pe.textureSlot = slot
+    
     pe.pDescriptor = varptr(photoDescriptor(slot))
     
     long e = tbgl_entityGetFreeID(%sScene)
