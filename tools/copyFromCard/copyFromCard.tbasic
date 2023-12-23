@@ -35,7 +35,7 @@ function tbmain()
     CopyFiles(fullSourceDir, destinationDir, "*.rw2")
     CopyFiles(fullSourceDir, destinationDir, "*.mov", "video\")
     CopyFiles(fullSourceDir, destinationDir, "*.mp4", "video\")
-    
+
   next
   
   PrintL
@@ -94,7 +94,7 @@ function CopyFiles(fullSourceDir as string, fullDestinationDirBase as string, ex
         DIR_MakeAll(fullDestDir)
       end if
       
-      print fullDestDir+files(f)
+      print $("({f}/{found}) {fullDestDir}{files(f)}")
       if not FILE_Exists(fullDestDir+files(f)) then
         file_copy(fullSourceDir+files(f), fullDestDir+files(f))
         printl " OK" in 10

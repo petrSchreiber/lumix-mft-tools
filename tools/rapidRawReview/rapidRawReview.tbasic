@@ -1,7 +1,7 @@
 ﻿uses "ui", "file", "AppConfig", "console", "TBGL", "ini"
 
-$APP_TITLE = "Rapid Raw Rate - TBGL"
-$CACHE_DIR = ".rapidRawRate/"
+$APP_TITLE = "Rapid Raw Review"
+$CACHE_DIR = ".rapidRawReview/"
 
 %sScene = 1
 %eCamera = 1
